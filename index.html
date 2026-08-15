@@ -268,7 +268,7 @@
     return {
       x: 0, y: 0, r: 14,
       speed: 220,
-      hp: 100, maxHp: 100,
+      hp: 70, maxHp: 70,
       level: 1, xp: 0, xpToNext: 12,
       fireRate: 0.55, fireTimer: 0,
       damage: 10, projSpeed: 480, projCount: 1, pierce: 0,
@@ -316,7 +316,7 @@
     { key: "damage", icon: "⚔️", name: "Overcharge", desc: "+35% projectile damage", apply: (p) => p.damage *= 1.35 },
     { key: "firerate", icon: "⚡", name: "Rapid Cycler", desc: "-18% fire cooldown", apply: (p) => p.fireRate = Math.max(0.12, p.fireRate * 0.82) },
     { key: "speed", icon: "🚀", name: "Thrusters", desc: "+16% move speed", apply: (p) => p.speed *= 1.16 },
-    { key: "hp", icon: "🛡️", name: "Hull Plating", desc: "+25 max HP, full heal", apply: (p) => { p.maxHp += 25; p.hp = p.maxHp; } },
+    { key: "hp", icon: "🛡️", name: "Hull Plating", desc: "+18 max HP, full heal", apply: (p) => { p.maxHp += 18; p.hp = p.maxHp; } },
     { key: "multi", icon: "🔱", name: "Split Emitter", desc: "+1 projectile", apply: (p) => p.projCount += 1 },
     { key: "pierce", icon: "🎯", name: "Piercing Rounds", desc: "+1 pierce", apply: (p) => p.pierce += 1 },
     { key: "pickup", icon: "🧲", name: "Magnetizer", desc: "+40% pickup radius", apply: (p) => p.pickupRadius *= 1.4 },
@@ -429,8 +429,8 @@
       e.x += Math.cos(ang) * e.speed * dt;
       e.y += Math.sin(ang) * e.speed * dt;
       if (player.invuln <= 0 && dist(player, e) < player.r + e.r) {
-        player.hp -= e.dmg * dt * 2.2;
-        player.invuln = 0.15;
+        player.hp -= e.dmg;
+        player.invuln = 0.4;
       }
     }
 
