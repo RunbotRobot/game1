@@ -162,7 +162,7 @@
 </div>
 
 <div id="wipBanner">
-  🚧 <b>Work in progress.</b> This page auto-refreshes every 5 min to pull in updates — tell Claude <b>"next"</b> any time to keep building. Next refresh in <span class="countdown" id="refreshCountdown">5:00</span>.
+  🚧 <b>Work in progress.</b> This page auto-refreshes every 5 min to pull in updates (your run is saved and resumes automatically) — tell Claude <b>"next"</b> any time to keep building. Next refresh in <span class="countdown" id="refreshCountdown">5:00</span>.
 </div>
 
 <script>
@@ -284,6 +284,71 @@
     elapsed = 0; kills = 0; spawnTimer = 0; spawnInterval = 1.4;
   }
 
+  /* ============================== RUN STATE PERSISTENCE ============================== */
+  // Keeps an in-progress run alive across the WIP auto-refresh (and any manual reload).
+  const RUNSTATE_KEY = "driftSwarm_runstate_v1";
+  const RUNSTATE_MAX_AGE_MS = 30 * 60 * 1000;
+
+  function saveRunState() {
+    if (state !== "playing" && state !== "paused" && state !== "levelup") return;
+    try {
+      localStorage.setItem(RUNSTATE_KEY, JSON.stringify({
+        ts: Date.now(),
+        gameState: state,
+        elapsed, kills, spawnTimer, spawnInterval,
+        player, enemies, projectiles, orbs,
+        cardKeys: currentLevelupKeys
+      }));
+    } catch (e) {}
+  }
+
+  function loadRunState() {
+    try {
+      const raw = localStorage.getItem(RUNSTATE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed || !parsed.player || parsed.player.hp <= 0) return null;
+      if (Date.now() - parsed.ts > RUNSTATE_MAX_AGE_MS) return null;
+      return parsed;
+    } catch (e) { return null; }
+  }
+
+  function clearRunState() {
+    try { localStorage.removeItem(RUNSTATE_KEY); } catch (e) {}
+  }
+
+  function resumeFromSavedRun(saved) {
+    document.getElementById("startScreen").classList.add("hidden");
+    document.getElementById("gameoverScreen").classList.add("hidden");
+    document.getElementById("hud").classList.remove("hidden");
+    document.getElementById("pauseHint").classList.remove("hidden");
+
+    player = saved.player;
+    enemies = saved.enemies || [];
+    projectiles = saved.projectiles || [];
+    orbs = saved.orbs || [];
+    particles = [];
+    elapsed = saved.elapsed || 0;
+    kills = saved.kills || 0;
+    spawnTimer = saved.spawnTimer || 0;
+    spawnInterval = saved.spawnInterval || 1.4;
+    updateHud();
+
+    const restoredCards = (saved.gameState === "levelup" && saved.cardKeys)
+      ? saved.cardKeys.map((k) => UPGRADE_POOL.find((u) => u.key === k)).filter(Boolean)
+      : [];
+
+    if (restoredCards.length) {
+      currentLevelupKeys = saved.cardKeys;
+      showLevelUpCards(restoredCards);
+    } else {
+      state = "playing";
+      lastTime = performance.now();
+      requestAnimationFrame(loop);
+      if (saved.gameState === "paused") togglePause();
+    }
+  }
+
   /* ============================== ENEMY TYPES ============================== */
   function spawnEnemy() {
     const edge = Math.floor(rand(0, 4));
@@ -333,17 +398,26 @@
     return chosen;
   }
 
+  let currentLevelupKeys = null;
+
   function openLevelUp() {
+    const chosen = pickUpgrades(3);
+    currentLevelupKeys = chosen.map((u) => u.key);
+    showLevelUpCards(chosen);
+  }
+
+  function showLevelUpCards(chosen) {
     state = "levelup";
     document.getElementById("levelupScreen").classList.remove("hidden");
     const container = document.getElementById("cardContainer");
     container.innerHTML = "";
-    pickUpgrades(3).forEach((u) => {
+    chosen.forEach((u) => {
       const card = document.createElement("div");
       card.className = "card";
       card.innerHTML = '<div class="icon">' + u.icon + '</div><div class="name">' + u.name + '</div><div class="desc">' + u.desc + '</div>';
       card.addEventListener("click", () => {
         u.apply(player);
+        currentLevelupKeys = null;
         document.getElementById("levelupScreen").classList.add("hidden");
         state = "playing";
         lastTime = performance.now();
@@ -571,6 +645,7 @@
     document.getElementById("gameoverScreen").classList.add("hidden");
     document.getElementById("hud").classList.remove("hidden");
     document.getElementById("pauseHint").classList.remove("hidden");
+    clearRunState();
     resetRun();
     state = "playing";
     lastTime = performance.now();
@@ -579,6 +654,7 @@
 
   function endRun() {
     state = "gameover";
+    clearRunState();
     save.runs++;
     if (elapsed > save.bestTime) save.bestTime = elapsed;
     if (kills > save.bestKills) save.bestKills = kills;
@@ -597,6 +673,14 @@
   document.getElementById("startBtn").addEventListener("click", startRun);
   document.getElementById("restartBtn").addEventListener("click", startRun);
 
+  // Resume an in-progress run if one was saved (e.g. by the auto-refresh below).
+  const savedRun = loadRunState();
+  if (savedRun) resumeFromSavedRun(savedRun);
+
+  // Safety-net autosave: covers crashes/force-closes where beforeunload never fires.
+  setInterval(saveRunState, 5000);
+  window.addEventListener("beforeunload", saveRunState);
+
   /* ============================== WIP AUTO-REFRESH ============================== */
   const REFRESH_MS = 5 * 60 * 1000;
   const refreshDeadline = Date.now() + REFRESH_MS;
@@ -608,7 +692,7 @@
   }
   tickCountdown();
   setInterval(tickCountdown, 1000);
-  setTimeout(() => location.reload(), REFRESH_MS);
+  setTimeout(() => { saveRunState(); location.reload(); }, REFRESH_MS);
 
 })();
 </script>
