@@ -104,6 +104,18 @@
     font-size: 12px; color: var(--text-dim); z-index: 10; pointer-events: none;
   }
 
+  /* Boss bar */
+  #bossBar {
+    position: absolute; top: 38px; left: 50%; transform: translateX(-50%);
+    width: min(360px, 70vw); z-index: 10; pointer-events: none; text-align: center;
+  }
+  #bossName {
+    font-size: 12px; font-weight: 800; letter-spacing: 2px; color: var(--accent2);
+    text-shadow: 0 0 10px rgba(255,94,196,0.6); margin-bottom: 5px;
+  }
+  #bossBar .bar-wrap { width: 100%; height: 11px; }
+  #bossHpFill { background: linear-gradient(90deg, var(--accent2), #ff8a5e); }
+
   /* WIP banner */
   #wipBanner {
     position: absolute; bottom: 10px; right: 10px; z-index: 40;
@@ -135,6 +147,10 @@
   </div>
 </div>
 <div id="pauseHint" class="hidden">Esc / P to pause</div>
+<div id="bossBar" class="hidden">
+  <div id="bossName">THREAT</div>
+  <div class="bar-wrap"><div class="bar-fill" id="bossHpFill" style="width:100%"></div></div>
+</div>
 
 <div id="startScreen" class="overlay">
   <h1 class="title">DRIFT&nbsp;SWARM</h1>
@@ -260,8 +276,10 @@
 
   /* ============================== GAME STATE ============================== */
   let state = "start"; // start | playing | paused | levelup | gameover
-  let player, enemies, projectiles, orbs, particles;
+  let player, enemies, projectiles, orbs, particles, enemyProjectiles;
   let elapsed = 0, kills = 0, spawnTimer = 0, spawnInterval = 1.4;
+  let bossTimer = 0, activeBoss = null;
+  const BOSS_INTERVAL = 75; // seconds between boss encounters
   let lastTime = 0;
 
   function newPlayer() {
@@ -280,8 +298,9 @@
   function resetRun() {
     player = newPlayer();
     player.x = W / 2; player.y = H / 2;
-    enemies = []; projectiles = []; orbs = []; particles = [];
+    enemies = []; projectiles = []; orbs = []; particles = []; enemyProjectiles = [];
     elapsed = 0; kills = 0; spawnTimer = 0; spawnInterval = 1.4;
+    bossTimer = 0; activeBoss = null;
   }
 
   /* ============================== RUN STATE PERSISTENCE ============================== */
@@ -295,8 +314,8 @@
       localStorage.setItem(RUNSTATE_KEY, JSON.stringify({
         ts: Date.now(),
         gameState: state,
-        elapsed, kills, spawnTimer, spawnInterval,
-        player, enemies, projectiles, orbs,
+        elapsed, kills, spawnTimer, spawnInterval, bossTimer,
+        player, enemies, projectiles, orbs, enemyProjectiles,
         cardKeys: currentLevelupKeys
       }));
     } catch (e) {}
@@ -328,10 +347,13 @@
     projectiles = saved.projectiles || [];
     orbs = saved.orbs || [];
     particles = [];
+    enemyProjectiles = saved.enemyProjectiles || [];
     elapsed = saved.elapsed || 0;
     kills = saved.kills || 0;
     spawnTimer = saved.spawnTimer || 0;
     spawnInterval = saved.spawnInterval || 1.4;
+    bossTimer = saved.bossTimer || 0;
+    activeBoss = enemies.find((e) => e.type === "boss") || null;
     updateHud();
 
     const restoredCards = (saved.gameState === "levelup" && saved.cardKeys)
@@ -374,6 +396,28 @@
       e = { x, y, r: 15, hp: 22 + t * 9, maxHp: 22 + t * 9, speed: 95 + t * 6, dmg: 14, color: "#ff4d5e", type };
     }
     enemies.push(e);
+  }
+
+  const BOSS_NAMES = ["Warden", "Harrow", "Nullspire", "Cataclysm", "Voidmaw"];
+  function spawnBoss() {
+    const edge = Math.floor(rand(0, 4));
+    let x, y;
+    const margin = 60;
+    if (edge === 0) { x = rand(0, W); y = -margin; }
+    else if (edge === 1) { x = W + margin; y = rand(0, H); }
+    else if (edge === 2) { x = rand(0, W); y = H + margin; }
+    else { x = -margin; y = rand(0, H); }
+
+    const t = elapsed / 60;
+    const hp = 240 + t * 110;
+    const boss = {
+      x, y, r: 40, hp, maxHp: hp, speed: 58 + t * 3, dmg: 26,
+      color: "#ff5ec4", type: "boss",
+      name: BOSS_NAMES[Math.min(BOSS_NAMES.length - 1, Math.floor(t / 1.5))],
+      attackTimer: 2.5, attackInterval: 2.3
+    };
+    enemies.push(boss);
+    activeBoss = boss;
   }
 
   /* ============================== UPGRADES ============================== */
@@ -454,6 +498,13 @@
       if (elapsed > 40 && Math.random() < 0.3) spawnEnemy();
     }
 
+    // boss
+    bossTimer += dt;
+    if (!activeBoss && bossTimer >= BOSS_INTERVAL) {
+      bossTimer = 0;
+      spawnBoss();
+    }
+
     // firing
     player.fireTimer -= dt;
     if (player.fireTimer <= 0 && enemies.length) {
@@ -486,8 +537,17 @@
           e.hp -= p.damage;
           burst(p.x, p.y, e.color, 4);
           if (e.hp <= 0) {
-            burst(e.x, e.y, e.color, 14);
-            orbs.push({ x: e.x, y: e.y, r: 6, value: e.maxHp > 40 ? 6 : 3 });
+            if (e.type === "boss") {
+              burst(e.x, e.y, e.color, 45);
+              for (let k = 0; k < 6; k++) {
+                orbs.push({ x: e.x + rand(-30, 30), y: e.y + rand(-30, 30), r: 7, value: 14 });
+              }
+              activeBoss = null;
+              bossTimer = 0;
+            } else {
+              burst(e.x, e.y, e.color, 14);
+              orbs.push({ x: e.x, y: e.y, r: 6, value: e.maxHp > 40 ? 6 : 3 });
+            }
             enemies.splice(j, 1);
             kills++;
           }
@@ -505,6 +565,30 @@
       if (player.invuln <= 0 && dist(player, e) < player.r + e.r) {
         player.hp -= e.dmg;
         player.invuln = 0.4;
+      }
+      if (e.type === "boss") {
+        e.attackTimer -= dt;
+        if (e.attackTimer <= 0) {
+          e.attackTimer = e.attackInterval;
+          const burstCount = 10;
+          for (let i = 0; i < burstCount; i++) {
+            const a = (i / burstCount) * Math.PI * 2;
+            enemyProjectiles.push({ x: e.x, y: e.y, vx: Math.cos(a) * 190, vy: Math.sin(a) * 190, r: 6, dmg: 12 });
+          }
+        }
+      }
+    }
+
+    // enemy projectiles (boss attacks)
+    for (let i = enemyProjectiles.length - 1; i >= 0; i--) {
+      const p = enemyProjectiles[i];
+      p.x += p.vx * dt; p.y += p.vy * dt;
+      if (p.x < -40 || p.x > W + 40 || p.y < -40 || p.y > H + 40) { enemyProjectiles.splice(i, 1); continue; }
+      if (player.invuln <= 0 && dist(player, p) < player.r + p.r) {
+        player.hp -= p.dmg;
+        player.invuln = 0.4;
+        burst(p.x, p.y, "#ff5ec4", 6);
+        enemyProjectiles.splice(i, 1);
       }
     }
 
@@ -550,6 +634,14 @@
     document.getElementById("levelBadge").textContent = player.level;
     document.getElementById("timerText").textContent = fmtTime(elapsed);
     document.getElementById("killText").innerHTML = "Kills: <b>" + kills + "</b>";
+
+    if (activeBoss) {
+      document.getElementById("bossBar").classList.remove("hidden");
+      document.getElementById("bossName").textContent = "⚠ " + activeBoss.name.toUpperCase() + " ⚠";
+      document.getElementById("bossHpFill").style.width = clamp(activeBoss.hp / activeBoss.maxHp, 0, 1) * 100 + "%";
+    } else {
+      document.getElementById("bossBar").classList.add("hidden");
+    }
   }
 
   /* ============================== DRAW ============================== */
@@ -587,6 +679,16 @@
 
     // enemies
     for (const e of enemies) {
+      if (e.type === "boss") {
+        ctx.save();
+        ctx.translate(e.x, e.y);
+        ctx.rotate(elapsed * 0.8);
+        ctx.strokeStyle = "rgba(255,94,196,0.55)"; ctx.lineWidth = 3;
+        ctx.shadowColor = "#ff5ec4"; ctx.shadowBlur = 18;
+        ctx.beginPath(); ctx.arc(0, 0, e.r + 9 + Math.sin(elapsed * 4) * 3, 0, Math.PI * 1.4); ctx.stroke();
+        ctx.beginPath(); ctx.arc(0, 0, e.r + 9 + Math.sin(elapsed * 4) * 3, Math.PI, Math.PI * 2.4); ctx.stroke();
+        ctx.restore();
+      }
       ctx.save();
       ctx.shadowColor = e.color; ctx.shadowBlur = 14;
       ctx.fillStyle = e.color;
@@ -603,6 +705,11 @@
     // projectiles
     ctx.fillStyle = "#52e0ff"; ctx.shadowColor = "#52e0ff"; ctx.shadowBlur = 8;
     for (const p of projectiles) { ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill(); }
+    ctx.shadowBlur = 0;
+
+    // enemy projectiles
+    ctx.fillStyle = "#ff5ec4"; ctx.shadowColor = "#ff5ec4"; ctx.shadowBlur = 10;
+    for (const p of enemyProjectiles) { ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill(); }
     ctx.shadowBlur = 0;
 
     // player
@@ -663,6 +770,7 @@
 
     document.getElementById("hud").classList.add("hidden");
     document.getElementById("pauseHint").classList.add("hidden");
+    document.getElementById("bossBar").classList.add("hidden");
     document.getElementById("gameoverStats").textContent =
       "You survived " + fmtTime(elapsed) + " and destroyed " + kills + " threats.";
     document.getElementById("gameoverBest").innerHTML =
